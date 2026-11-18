@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">FaceSwap Cam</string>
+    <string name="app_name_bn">ফেসসোয়াপ ক্যাম</string>
+    <string name="permission_camera_title">Camera Access Required • ক্যামেরা অনুমতি প্রয়োজন</string>
+    <string name="permission_camera_desc">FaceSwap Cam needs your camera to track your face mesh in real time and your microphone to record video with audio. • রিয়েল-টাইম ফেস মেশ ট্র্যাকিং এবং অডিওসহ ভিডিও রেকর্ড করতে ক্যামেরা ও মাইক্রোফোন অনুমতি প্রয়োজন।</string>
+    <string name="permission_grant_btn">Enable Camera • ক্যামেরা চালু করুন</string>
+</resources>

@@ -1,0 +1,6 @@
+{
+  "name": "FaceSwap Cam",
+  "description": "Real-time AI face mesh swapping camera and audio/video recorder for creators with Bengali and English UI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
