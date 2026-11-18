@@ -28,6 +28,15 @@ jobs:
       - name: Install dependencies
         run: npm ci || npm install
 
+      - name: Bundle MediaPipe model + wasm (offline)
+        run: |
+          mkdir -p public/wasm public/models
+          curl -fsSL -o public/models/face_landmarker.task "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+          for f in vision_wasm_internal.js vision_wasm_nosimd_internal.js vision_wasm_internal.wasm vision_wasm_nosimd_internal.wasm; do
+            curl -fsSL -o "public/wasm/$f" "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm/$f"
+          done
+          ls -la public/wasm public/models
+
       - name: Build web app
         run: npm run build
 
@@ -39,6 +48,12 @@ jobs:
 
       - name: Sync Capacitor
         run: npx cap sync android
+
+      - name: Add camera + mic permissions
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          grep -q "android.permission.CAMERA" "$MANIFEST" || sed -i 's|    <uses-permission android:name="android.permission.INTERNET" />|    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />|' "$MANIFEST"
+          grep "uses-permission" "$MANIFEST"
 
       - name: Build Debug APK
         working-directory: android
