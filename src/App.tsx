@@ -80,6 +80,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [statusErrorKind, setStatusErrorKind] = useState<'camera' | 'model' | null>(null);
+  const [cameraAttempt, setCameraAttempt] = useState(0);
   const [modelReady, setModelReady] = useState(false);
 
   const settingsRef = useRef(settings);
@@ -91,24 +93,85 @@ export default function App() {
     let active = true;
     async function initMediaPipe() {
       try {
-        const vision = await FilesetResolver.forVisionTasks(
-          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm',
-        );
-        const modelUrl =
-          'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+        // The face model + wasm runtime are bundled inside the app
+        // (public/wasm and public/models), so the app works offline.
+        // CDN is only a fallback. GPU is tried first, CPU if GPU fails.
+        const combos: Array<{
+          wasm: string;
+          model: string;
+          delegate: 'GPU' | 'CPU';
+        }> = [
+          { wasm: 'wasm', model: 'models/face_landmarker.task', delegate: 'GPU' },
+          { wasm: 'wasm', model: 'models/face_landmarker.task', delegate: 'CPU' },
+          {
+            wasm: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm',
+            model:
+              'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+            delegate: 'GPU',
+          },
+          {
+            wasm: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm',
+            model:
+              'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+            delegate: 'CPU',
+          },
+        ];
 
-        const videoLm = await FaceLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: modelUrl, delegate: 'GPU' },
-          runningMode: 'VIDEO',
-          numFaces: 1,
-          outputFaceBlendshapes: true,
-        });
+        async function tryCreate(
+          combo: (typeof combos)[number],
+          runningMode: 'VIDEO' | 'IMAGE',
+          blendshapes: boolean,
+        ) {
+          const vision = await FilesetResolver.forVisionTasks(combo.wasm);
+          return FaceLandmarker.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: combo.model, delegate: combo.delegate },
+            runningMode,
+            numFaces: 1,
+            ...(blendshapes ? { outputFaceBlendshapes: true } : {}),
+          });
+        }
 
-        const imgLm = await FaceLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: modelUrl, delegate: 'GPU' },
-          runningMode: 'IMAGE',
-          numFaces: 1,
-        });
+        let videoLm: FaceLandmarker | null = null;
+        let imgLm: FaceLandmarker | null = null;
+        let workingCombo: (typeof combos)[number] | null = null;
+        for (const combo of combos) {
+          try {
+            videoLm = await tryCreate(combo, 'VIDEO', true);
+            workingCombo = combo;
+            break;
+          } catch {
+            videoLm = null;
+          }
+        }
+        if (videoLm && workingCombo) {
+          try {
+            imgLm = await tryCreate(workingCombo, 'IMAGE', false);
+          } catch {
+            imgLm = null;
+          }
+          if (!imgLm) {
+            for (const combo of combos) {
+              if (combo === workingCombo) continue;
+              try {
+                imgLm = await tryCreate(combo, 'IMAGE', false);
+                break;
+              } catch {
+                imgLm = null;
+              }
+            }
+          }
+        }
+
+        if (!videoLm || !imgLm) {
+          videoLm?.close();
+          imgLm?.close();
+          if (!active) return;
+          setStatusErrorKind('model');
+          setStatusError(
+            'Failed to load face model • ফেস মডেল লোড করা যায়নি — ইন্টারনেট চালু করে অ্যাপ আবার খুলুন',
+          );
+          return;
+        }
 
         if (!active) {
           videoLm.close();
@@ -142,8 +205,10 @@ export default function App() {
         }
         setModelReady(true);
       } catch {
+        if (!active) return;
+        setStatusErrorKind('model');
         setStatusError(
-          'Failed to load MediaPipe GPU model • মিডিয়াপাইপ মডেল লোড করা যায়নি',
+          'Failed to load face model • ফেস মডেল লোড করা যায়নি — ইন্টারনেট চালু করে অ্যাপ আবার খুলুন',
         );
       }
     }
@@ -192,8 +257,10 @@ export default function App() {
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
         }
+        setStatusErrorKind(null);
         setStatusError(null);
       } catch {
+        setStatusErrorKind('camera');
         setStatusError(
           'Camera access denied • ক্যামেরার অনুমতি প্রয়োজন',
         );
@@ -203,7 +270,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [settings.facingMode, settings.resolution]);
+  }, [settings.facingMode, settings.resolution, cameraAttempt]);
 
   useEffect(() => {
     let rafId = 0;
@@ -494,12 +561,43 @@ export default function App() {
           }}
         >
           <span style={{ fontSize: 13, color: '#FFE4E8' }}>{statusError}</span>
-          <button
-            onClick={() => setStatusError(null)}
-            style={{ background: 'none', border: 'none', color: '#FF3B5C', cursor: 'pointer' }}
-          >
-            <X size={18} />
-          </button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+            {statusErrorKind && (
+              <button
+                onClick={() => {
+                  setStatusError(null);
+                  setStatusErrorKind(null);
+                  if (statusErrorKind === 'camera') {
+                    setCameraAttempt((a) => a + 1);
+                  } else {
+                    window.location.reload();
+                  }
+                }}
+                style={{
+                  background: '#00E5C3',
+                  border: 'none',
+                  color: '#06231E',
+                  fontWeight: 700,
+                  borderRadius: 10,
+                  padding: '8px 12px',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                আবার চেষ্টা করুন
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setStatusError(null);
+                setStatusErrorKind(null);
+              }}
+              style={{ background: 'none', border: 'none', color: '#FF3B5C', cursor: 'pointer' }}
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -781,6 +879,26 @@ export default function App() {
                 <li>Side profiles or tilted heads • একপাশ থেকে তোলা বা বাঁকা মাথা</li>
                 <li>Sunglasses, hands, or hair blocking eyes • চোখ ঢাকা সানগ্লাস বা চুল</li>
                 <li>Extreme cartoon proportions or blurry photos • অতিরিক্ত কার্টুন বা ঝাপসা ছবি</li>
+              </ul>
+            </div>
+
+            <div
+              style={{
+                padding: 14,
+                borderRadius: 14,
+                background: 'rgba(96,165,250,0.08)',
+                border: '1px solid rgba(96,165,250,0.3)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#60A5FA', fontWeight: 700, marginBottom: 8 }}>
+                <Camera size={18} />
+                <span>Camera Permission • ক্যামেরার অনুমতি</span>
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.65, color: '#E2E8F0' }}>
+                <li>প্রথমবার ক্যামেরা চালু করলে অনুমতি চাইবে — Allow দিন</li>
+                <li>ভুল করে Deny করলে: Settings → Apps → FaceSwap Cam → Permissions → Camera → Allow করুন</li>
+                <li>মাইকের অনুমতিও দিন — নইলে রেকর্ড করা ভিডিওতে শব্দ আসবে না</li>
+                <li>ফেস মডেল ফোনের ভেতরেই থাকে — ইন্টারনেট ছাড়াও ফেস-সোয়াপ চলবে</li>
               </ul>
             </div>
           </div>
