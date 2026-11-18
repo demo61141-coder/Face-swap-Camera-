@@ -181,7 +181,7 @@ export default function App() {
             width: { ideal: res.width },
             height: { ideal: res.height },
           },
-          audio: true,
+          audio: false,
         });
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
@@ -195,7 +195,7 @@ export default function App() {
         setStatusError(null);
       } catch {
         setStatusError(
-          'Camera & mic access denied • ক্যামেরা ও মাইক্রোফোনের অনুমতি প্রয়োজন',
+          'Camera access denied • ক্যামেরার অনুমতি প্রয়োজন',
         );
       }
     }
@@ -327,7 +327,7 @@ export default function App() {
     }
   }
 
-  function handleToggleRecord() {
+  async function handleToggleRecord() {
     if (isRecording) {
       mediaRecorderRef.current?.stop();
       setIsRecording(false);
@@ -336,24 +336,40 @@ export default function App() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const canvasStream = canvas.captureStream(30);
-    const audioTracks = streamRef.current?.getAudioTracks() ?? [];
+
+    let micStream: MediaStream | null = null;
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      micStream = null;
+    }
+
+    const audioTracks = micStream?.getAudioTracks() ?? [];
     const combined = new MediaStream([...canvasStream.getVideoTracks(), ...audioTracks]);
 
     recordedChunksRef.current = [];
-    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-      ? 'video/webm;codecs=vp9,opus'
-      : 'video/webm';
+    const mimeType = MediaRecorder.isTypeSupported('video/mp4')
+      ? 'video/mp4'
+      : MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+        ? 'video/webm;codecs=vp9,opus'
+        : 'video/webm';
 
+    const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
     const recorder = new MediaRecorder(combined, { mimeType });
     recorder.ondataavailable = (ev) => {
       if (ev.data.size > 0) recordedChunksRef.current.push(ev.data);
     };
     recorder.onstop = () => {
+      micStream?.getTracks().forEach((t) => t.stop());
       const blob = new Blob(recordedChunksRef.current, { type: mimeType });
+      const file = new File([blob], `FaceSwapCam_${Date.now()}.${ext}`, { type: mimeType });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file], title: 'FaceSwap Cam' }).catch(() => {});
+      }
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `FaceSwapCam_${Date.now()}.webm`;
+      a.download = file.name;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     };

@@ -15,6 +15,7 @@ import androidx.camera.core.UseCaseGroup
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.MediaStoreOutputOptions
 import androidx.camera.video.QualitySelector
 import androidx.camera.video.Recorder
@@ -88,7 +89,12 @@ class CameraEngine(
                 surfaceProcessor.isFrontCamera = isFrontCamera
 
                 val recorder = Recorder.Builder()
-                    .setQualitySelector(QualitySelector.from(resolution.cameraQuality))
+                    .setQualitySelector(
+                        QualitySelector.from(
+                            resolution.cameraQuality,
+                            FallbackStrategy.higherQualityOrLowerThan(resolution.cameraQuality),
+                        ),
+                    )
                     .build()
                 val video = VideoCapture.Builder(recorder)
                     .setMirrorMode(androidx.camera.core.MirrorMode.MIRROR_MODE_OFF)
@@ -157,18 +163,24 @@ class CameraEngine(
             pending = pending.withAudioEnabled()
         }
 
-        activeRecording = pending.start(ContextCompat.getMainExecutor(context)) { event ->
-            when (event) {
-                is VideoRecordEvent.Start -> onStarted()
-                is VideoRecordEvent.Finalize -> {
-                    activeRecording = null
-                    if (event.hasError()) {
-                        onFinalized(null, "Recording failed (${event.error})")
-                    } else {
-                        onFinalized(event.outputResults.outputUri, null)
+        try {
+            activeRecording = pending.start(ContextCompat.getMainExecutor(context)) { event ->
+                when (event) {
+                    is VideoRecordEvent.Start -> onStarted()
+                    is VideoRecordEvent.Finalize -> {
+                        activeRecording = null
+                        if (event.hasError()) {
+                            onFinalized(null, "Recording failed (code ${event.error})")
+                        } else {
+                            onFinalized(event.outputResults.outputUri, null)
+                        }
                     }
                 }
             }
+        } catch (t: Throwable) {
+            activeRecording = null
+            Log.e(TAG, "Failed to start recording", t)
+            onFinalized(null, t.localizedMessage ?: "Unable to start recording")
         }
     }
 

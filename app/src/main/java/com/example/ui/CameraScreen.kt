@@ -103,11 +103,20 @@ fun CameraScreen(
     uiState: FaceSwapUiState,
     hasCameraPermission: Boolean,
     hasAudioPermission: Boolean,
+    showAppSettingsShortcut: Boolean,
     onRequestPermissions: () -> Unit,
+    onOpenAppSettings: () -> Unit,
     viewModel: FaceSwapViewModel,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    val fallbackContentPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+        onResult = { uri ->
+            uri?.let { viewModel.uploadCustomFace(it) }
+        },
+    )
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
@@ -152,7 +161,11 @@ fun CameraScreen(
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
-            PermissionPromptOverlay(onGrantClick = onRequestPermissions)
+            PermissionPromptOverlay(
+                showSettingsShortcut = showAppSettingsShortcut,
+                onGrantClick = onRequestPermissions,
+                onOpenSettingsClick = onOpenAppSettings,
+            )
         }
 
         // Top Translucent Header
@@ -381,10 +394,30 @@ fun CameraScreen(
                         UploadFaceChip(
                             isValidating = uiState.isValidatingUpload,
                             onClick = {
-                                photoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                                )
+                                runCatching {
+                                    photoPickerLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                    )
+                                }.onFailure {
+                                    fallbackContentPicker.launch("image/*")
+                                }
                             },
+                        )
+                    }
+                }
+
+                if (!hasAudioPermission && !uiState.isRecording) {
+                    Surface(
+                        onClick = if (showAppSettingsShortcut) onOpenAppSettings else onRequestPermissions,
+                        color = SurfaceGlass,
+                        shape = RoundedCornerShape(999.dp),
+                        border = BorderStroke(1.dp, SurfaceStroke),
+                    ) {
+                        Text(
+                            text = "Mic off (tap to allow audio) • মাইক বন্ধ (অডিও চালু করতে ট্যাপ করুন)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextMuted,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                         )
                     }
                 }
@@ -392,11 +425,7 @@ fun CameraScreen(
                 RecordShutterButton(
                     isRecording = uiState.isRecording,
                     onClick = {
-                        if (!hasAudioPermission) {
-                            onRequestPermissions()
-                        } else {
-                            viewModel.toggleRecording(hasAudioPermission = true)
-                        }
+                        viewModel.toggleRecording(hasAudioPermission = hasAudioPermission)
                     },
                 )
             }
@@ -421,7 +450,11 @@ fun CameraScreen(
 }
 
 @Composable
-private fun PermissionPromptOverlay(onGrantClick: () -> Unit) {
+private fun PermissionPromptOverlay(
+    showSettingsShortcut: Boolean,
+    onGrantClick: () -> Unit,
+    onOpenSettingsClick: () -> Unit,
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -479,6 +512,14 @@ private fun PermissionPromptOverlay(onGrantClick: () -> Unit) {
                         text = stringResource(R.string.permission_grant_btn),
                         fontWeight = FontWeight.Bold,
                     )
+                }
+                if (showSettingsShortcut) {
+                    TextButton(onClick = onOpenSettingsClick) {
+                        Text(
+                            text = "Open App Settings • অ্যাপ সেটিংস খুলুন",
+                            color = MintCyan,
+                        )
+                    }
                 }
             }
         }
